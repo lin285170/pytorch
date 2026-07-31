@@ -1,0 +1,116 @@
+﻿# Build aarch64 (Linux ARM64) PyTorch wheel with CUDA support.
+#
+# Reuses the official PyTorch aarch64 manywheel build pipeline
+# (.ci/pytorch/binary_populate_env.sh + .ci/manywheel/build.sh) inside the
+# official pytorch/manylinuxaarch64-builder Docker image, but runs on a
+# GitHub-hosted native ARM runner (ubuntu-24.04-arm) instead of PyTorch's
+# internal self-hosted runners, so it works on a personal fork.
+#
+# Authored with AI assistance.
+name: build-aarch64-cuda-wheel
+
+on:
+  workflow_dispatch:
+    inputs:
+      desired_python:
+        description: "Python version (e.g. 3.12)"
+        required: true
+        default: "3.12"
+      desired_cuda:
+        description: "CUDA variant (cu126, cu130, cu132)"
+        required: true
+        type: choice
+        default: "cu126"
+        options:
+          - cu126
+          - cu130
+          - cu132
+      max_jobs:
+        description: "MAX_JOBS (parallel compile jobs; lower to avoid OOM)"
+        required: false
+        default: "4"
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-config:
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      docker_image: ${{ steps.cfg.outputs.docker_image }}
+      gpu_arch_version: ${{ steps.cfg.outputs.gpu_arch_version }}
+      extra_reqs: ${{ steps.cfg.outputs.extra_reqs }}
+    steps:
+      - id: cfg
+        shell: bash
+        run: |
+          case "${{ inputs.desired_cuda }}" in
+            cu126)
+              echo "docker_image=pytorch/manylinuxaarch64-builder:cuda12.6" >> "$GITHUB_OUTPUT"
+              echo "gpu_arch_version=12.6-aarch64" >> "$GITHUB_OUTPUT"
+              echo "extra_reqs=cuda-toolkit[nvrtc,cudart,cupti,cufft,curand,cusolver,cusparse,cublas,cufile,nvtx]==12.6.3; platform_system == 'Linux' | cuda-bindings>=12.9.4,<13; platform_system == 'Linux' and python_version < '3.15' | nvidia-cudnn-cu12==9.10.2.21; platform_system == 'Linux' | nvidia-cusparselt-cu12==0.7.1; platform_system == 'Linux' | nvidia-nccl-cu12==2.29.3; platform_system == 'Linux' | nvidia-nvshmem-cu12==3.4.5; platform_system == 'Linux' | nvidia-nvjitlink-cu12>=12.6.85,<13; platform_system == 'Linux'" >> "$GITHUB_OUTPUT"
+              ;;
+            cu130)
+              echo "docker_image=pytorch/manylinuxaarch64-builder:cuda13.0" >> "$GITHUB_OUTPUT"
+              echo "gpu_arch_version=13.0-aarch64" >> "$GITHUB_OUTPUT"
+              echo "extra_reqs=cuda-toolkit[nvrtc,cudart,cupti,cufft,curand,cusolver,cusparse,cublas,cufile,nvjitlink,nvtx]==13.0.3; platform_system == 'Linux' | cuda-bindings>=13.0.3,<14; platform_system == 'Linux' and python_version < '3.15' | nvidia-cudnn-cu13==9.24.0.43; platform_system == 'Linux' | nvidia-cusparselt-cu13==0.8.1; platform_system == 'Linux' | nvidia-nccl-cu13==2.30.7; platform_system == 'Linux' | nvidia-nvshmem-cu13==3.4.5; platform_system == 'Linux'" >> "$GITHUB_OUTPUT"
+              ;;
+            cu132)
+              echo "docker_image=pytorch/manylinuxaarch64-builder:cuda13.2" >> "$GITHUB_OUTPUT"
+              echo "gpu_arch_version=13.2-aarch64" >> "$GITHUB_OUTPUT"
+              echo "extra_reqs=cuda-toolkit[nvrtc,cudart,cupti,cufft,curand,cusolver,cusparse,cublas,cufile,nvjitlink,nvtx]==13.2.0; platform_system == 'Linux' | cuda-bindings>=13.0.3,<14; platform_system == 'Linux' and python_version < '3.15' | nvidia-cudnn-cu13==9.24.0.43; platform_system == 'Linux' | nvidia-cusparselt-cu13==0.8.1; platform_system == 'Linux' | nvidia-nccl-cu13==2.30.7; platform_system == 'Linux' | nvidia-nvshmem-cu13==3.4.5; platform_system == 'Linux'" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+  build:
+    needs: resolve-config
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+    container:
+      image: ${{ needs.resolve-config.outputs.docker_image }}
+      options: --shm-size=16g
+    env:
+      PYTORCH_ROOT: ${{ github.workspace }}
+      PACKAGE_TYPE: manywheel
+      DESIRED_CUDA: ${{ inputs.desired_cuda }}
+      GPU_ARCH_VERSION: ${{ needs.resolve-config.outputs.gpu_arch_version }}
+      GPU_ARCH_TYPE: cuda-aarch64
+      DOCKER_IMAGE: ${{ needs.resolve-config.outputs.docker_image }}
+      SKIP_ALL_TESTS: 1
+      DESIRED_PYTHON: ${{ inputs.desired_python }}
+      MAX_JOBS: ${{ inputs.max_jobs }}
+      PYTORCH_EXTRA_INSTALL_REQUIREMENTS: ${{ needs.resolve-config.outputs.extra_reqs }}
+      BINARY_ENV_FILE: /tmp/env
+      BUILD_ENVIRONMENT: linux-aarch64-binary-manywheel
+      ALPINE_IMAGE: arm64v8/alpine
+    steps:
+      - name: Configure git safe directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Checkout PyTorch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          submodules: recursive
+          show-progress: false
+
+      - name: Populate binary env
+        shell: bash
+        run: |
+          export PYTORCH_FINAL_PACKAGE_DIR="${RUNNER_TEMP}/artifacts"
+          mkdir -p "${PYTORCH_FINAL_PACKAGE_DIR}"
+          echo "PYTORCH_FINAL_PACKAGE_DIR=${PYTORCH_FINAL_PACKAGE_DIR}" >> "${GITHUB_ENV}"
+          bash .ci/pytorch/binary_populate_env.sh
+
+      - name: Build PyTorch wheel
+        shell: bash
+        run: |
+          source "${BINARY_ENV_FILE}"
+          bash .ci/manywheel/build.sh
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: aarch64-cuda-${{ inputs.desired_cuda }}-py${{ inputs.desired_python }}
+          if-no-files-found: error
+          path: ${{ runner.temp }}/artifacts/*
