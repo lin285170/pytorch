@@ -97,10 +97,12 @@ jobs:
             /usr/local/.ghcup /opt/hostedtoolcache /usr/local/share/boost \
             /usr/local/share/chrom* /usr/local/share/edge /usr/local/share/vscode* 2>/dev/null || true
           SWAP_GB=${{ inputs.swap_size_gb }}
-          sudo fallocate -l "${SWAP_GB}G" /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          sudo swapoff -a 2>/dev/null || true
+          sudo rm -f /swapfile /swapfile1
+          sudo fallocate -l "${SWAP_GB}G" /swapfile-build
+          sudo chmod 600 /swapfile-build
+          sudo mkswap /swapfile-build
+          sudo swapon /swapfile-build
           echo "--- memory after swap ---"
           free -h
           echo "--- disk after cleanup ---"
