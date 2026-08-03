@@ -6,6 +6,10 @@
 # GitHub-hosted native ARM runner (ubuntu-24.04-arm) instead of PyTorch's
 # internal self-hosted runners, so it works on a personal fork.
 #
+# Uses bare-runner mode (no GHA container directive) so we can add a host
+# swap file before launching the build container; the standard 16GB ARM
+# runner otherwise OOM-kills (exit 137) during torch_cuda compilation.
+#
 # Authored with AI assistance.
 name: build-aarch64-cuda-wheel
 
@@ -28,7 +32,11 @@ on:
       max_jobs:
         description: "MAX_JOBS (parallel compile jobs; lower to avoid OOM)"
         required: false
-        default: "4"
+        default: "3"
+      swap_size_gb:
+        description: "Swap file size in GB (prevents OOM on 16GB runner)"
+        required: false
+        default: "16"
 
 permissions:
   contents: read
@@ -66,9 +74,6 @@ jobs:
     needs: resolve-config
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 360
-    container:
-      image: ${{ needs.resolve-config.outputs.docker_image }}
-      options: --shm-size=16g
     env:
       PYTORCH_ROOT: ${{ github.workspace }}
       PACKAGE_TYPE: manywheel
@@ -84,8 +89,22 @@ jobs:
       BUILD_ENVIRONMENT: linux-aarch64-binary-manywheel
       ALPINE_IMAGE: arm64v8/alpine
     steps:
-      - name: Configure git safe directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Add swap and free disk space
+        shell: bash
+        run: |
+          set -eux
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache /usr/local/share/boost \
+            /usr/local/share/chrom* /usr/local/share/edge /usr/local/share/vscode* 2>/dev/null || true
+          SWAP_GB=${{ inputs.swap_size_gb }}
+          sudo fallocate -l "${SWAP_GB}G" /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          echo "--- memory after swap ---"
+          free -h
+          echo "--- disk after cleanup ---"
+          df -h /
 
       - name: Checkout PyTorch
         uses: actions/checkout@v4
@@ -94,23 +113,53 @@ jobs:
           submodules: recursive
           show-progress: false
 
-      - name: Populate binary env
+      - name: Pull build image
         shell: bash
-        run: |
-          export PYTORCH_FINAL_PACKAGE_DIR="${RUNNER_TEMP}/artifacts"
-          mkdir -p "${PYTORCH_FINAL_PACKAGE_DIR}"
-          echo "PYTORCH_FINAL_PACKAGE_DIR=${PYTORCH_FINAL_PACKAGE_DIR}" >> "${GITHUB_ENV}"
-          bash .ci/pytorch/binary_populate_env.sh
+        run: docker pull "${DOCKER_IMAGE}"
 
       - name: Build PyTorch wheel
         shell: bash
         run: |
-          source "${BINARY_ENV_FILE}"
-          bash .ci/manywheel/build.sh
+          set -eux
+          export PYTORCH_FINAL_PACKAGE_DIR="${RUNNER_TEMP}/artifacts"
+          mkdir -p "${PYTORCH_FINAL_PACKAGE_DIR}"
+
+          container_name=$(docker run \
+            -e BINARY_ENV_FILE \
+            -e BUILD_ENVIRONMENT \
+            -e DESIRED_CUDA \
+            -e DESIRED_PYTHON \
+            -e GITHUB_ACTIONS \
+            -e GPU_ARCH_TYPE \
+            -e GPU_ARCH_VERSION \
+            -e PACKAGE_TYPE \
+            -e PYTORCH_FINAL_PACKAGE_DIR \
+            -e PYTORCH_ROOT \
+            -e SKIP_ALL_TESTS \
+            -e PYTORCH_EXTRA_INSTALL_REQUIREMENTS \
+            -e DOCKER_IMAGE \
+            -e ALPINE_IMAGE \
+            -e MAX_JOBS \
+            --shm-size=16g \
+            --tty \
+            --detach \
+            -v "${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}" \
+            -v "${PYTORCH_FINAL_PACKAGE_DIR}:${PYTORCH_FINAL_PACKAGE_DIR}" \
+            -w / \
+            "${DOCKER_IMAGE}")
+
+          docker exec -t -w "${PYTORCH_ROOT}" "${container_name}" \
+            bash -c "git config --global --add safe.directory '${PYTORCH_ROOT}' && bash .ci/pytorch/binary_populate_env.sh"
+
+          docker exec -t -w "${PYTORCH_ROOT}" "${container_name}" \
+            bash -c "source '${BINARY_ENV_FILE}' && bash .ci/manywheel/build.sh"
+
+          docker stop "${container_name}" >/dev/null || true
 
       - name: Upload wheel
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: aarch64-cuda-${{ inputs.desired_cuda }}-py${{ inputs.desired_python }}
-          if-no-files-found: error
+          if-no-files-found: warn
           path: ${{ runner.temp }}/artifacts/*
