@@ -1,18 +1,8 @@
 # Build aarch64 (Linux ARM64) PyTorch wheel with CUDA support.
 #
-# Reuses the official PyTorch aarch64 manywheel build pipeline
-# (.ci/pytorch/binary_populate_env.sh + .ci/manywheel/build.sh) inside the
-# official pytorch/manylinuxaarch64-builder Docker image, but runs on a
-# GitHub-hosted native ARM runner (ubuntu-24.04-arm) instead of PyTorch's
-# internal self-hosted runners, so it works on a personal fork.
-#
-# Builds the Docker image from source on the fork (using the upstream
-# pytorch/pytorch Dockerfile_cuda_aarch64 which is based on
-# quay.io/pypa/manylinux_2_28_aarch64, glibc 2.28).
-#
-# Uses bare-runner mode (no GHA container directive) so we can add a host
-# swap file before launching the build container; the standard 16GB ARM
-# runner otherwise OOM-kills (exit 137) during torch_cuda compilation.
+# Uses quay.io/pypa/manylinux_2_28_aarch64 (glibc 2.28) as the base image,
+# installs CUDA and build dependencies inside the container at runtime,
+# then builds PyTorch using the official manywheel pipeline.
 #
 # Authored with AI assistance.
 name: build-aarch64-cuda-wheel
@@ -49,31 +39,27 @@ jobs:
   resolve-config:
     runs-on: ubuntu-24.04-arm
     outputs:
-      docker_image: ${{ steps.cfg.outputs.docker_image }}
+      base_cuda_version: ${{ steps.cfg.outputs.base_cuda_version }}
       gpu_arch_version: ${{ steps.cfg.outputs.gpu_arch_version }}
       extra_reqs: ${{ steps.cfg.outputs.extra_reqs }}
-      base_cuda_version: ${{ steps.cfg.outputs.base_cuda_version }}
     steps:
       - id: cfg
         shell: bash
         run: |
           case "${{ inputs.desired_cuda }}" in
             cu126)
-              echo "docker_image=pytorch/manylinuxaarch64-builder:cuda12.6" >> "$GITHUB_OUTPUT"
-              echo "gpu_arch_version=12.6-aarch64" >> "$GITHUB_OUTPUT"
               echo "base_cuda_version=12.6" >> "$GITHUB_OUTPUT"
+              echo "gpu_arch_version=12.6-aarch64" >> "$GITHUB_OUTPUT"
               echo "extra_reqs=cuda-toolkit[nvrtc,cudart,cupti,cufft,curand,cusolver,cusparse,cublas,cufile,nvtx]==12.6.3; platform_system == 'Linux' | cuda-bindings>=12.9.4,<13; platform_system == 'Linux' and python_version < '3.15' | nvidia-cudnn-cu12==9.10.2.21; platform_system == 'Linux' | nvidia-cusparselt-cu12==0.7.1; platform_system == 'Linux' | nvidia-nccl-cu12==2.29.3; platform_system == 'Linux' | nvidia-nvshmem-cu12==3.4.5; platform_system == 'Linux' | nvidia-nvjitlink-cu12>=12.6.85,<13; platform_system == 'Linux'" >> "$GITHUB_OUTPUT"
               ;;
             cu130)
-              echo "docker_image=pytorch/manylinuxaarch64-builder:cuda13.0" >> "$GITHUB_OUTPUT"
-              echo "gpu_arch_version=13.0-aarch64" >> "$GITHUB_OUTPUT"
               echo "base_cuda_version=13.0" >> "$GITHUB_OUTPUT"
+              echo "gpu_arch_version=13.0-aarch64" >> "$GITHUB_OUTPUT"
               echo "extra_reqs=cuda-toolkit[nvrtc,cudart,cupti,cufft,curand,cusolver,cusparse,cublas,cufile,nvjitlink,nvtx]==13.0.3; platform_system == 'Linux' | cuda-bindings>=13.0.3,<14; platform_system == 'Linux' and python_version < '3.15' | nvidia-cudnn-cu13==9.24.0.43; platform_system == 'Linux' | nvidia-cusparselt-cu13==0.8.1; platform_system == 'Linux' | nvidia-nccl-cu13==2.30.7; platform_system == 'Linux' | nvidia-nvshmem-cu13==3.4.5; platform_system == 'Linux'" >> "$GITHUB_OUTPUT"
               ;;
             cu132)
-              echo "docker_image=pytorch/manylinuxaarch64-builder:cuda13.2" >> "$GITHUB_OUTPUT"
-              echo "gpu_arch_version=13.2-aarch64" >> "$GITHUB_OUTPUT"
               echo "base_cuda_version=13.2" >> "$GITHUB_OUTPUT"
+              echo "gpu_arch_version=13.2-aarch64" >> "$GITHUB_OUTPUT"
               echo "extra_reqs=cuda-toolkit[nvrtc,cudart,cupti,cufft,curand,cusolver,cusparse,cublas,cufile,nvjitlink,nvtx]==13.2.0; platform_system == 'Linux' | cuda-bindings>=13.0.3,<14; platform_system == 'Linux' and python_version < '3.15' | nvidia-cudnn-cu13==9.24.0.43; platform_system == 'Linux' | nvidia-cusparselt-cu13==0.8.1; platform_system == 'Linux' | nvidia-nccl-cu13==2.30.7; platform_system == 'Linux' | nvidia-nvshmem-cu13==3.4.5; platform_system == 'Linux'" >> "$GITHUB_OUTPUT"
               ;;
           esac
@@ -88,7 +74,7 @@ jobs:
       DESIRED_CUDA: ${{ inputs.desired_cuda }}
       GPU_ARCH_VERSION: ${{ needs.resolve-config.outputs.gpu_arch_version }}
       GPU_ARCH_TYPE: cuda-aarch64
-      DOCKER_IMAGE: ${{ needs.resolve-config.outputs.docker_image }}
+      DOCKER_IMAGE: quay.io/pypa/manylinux_2_28_aarch64
       SKIP_ALL_TESTS: 1
       DESIRED_PYTHON: ${{ inputs.desired_python }}
       MAX_JOBS: ${{ inputs.max_jobs }}
@@ -132,18 +118,9 @@ jobs:
           path: upstream-ci
           show-progress: false
 
-      - name: Build Docker image from source
+      - name: Pull base image
         shell: bash
-        run: |
-          set -eux
-          cd "${GITHUB_WORKSPACE}/upstream-ci/.ci/docker"
-          docker build \
-            -f manywheel/Dockerfile_cuda_aarch64 \
-            --build-arg "BASE_CUDA_VERSION=${BASE_CUDA_VERSION}" \
-            --build-arg DEVTOOLSET_VERSION=13 \
-            -t "${DOCKER_IMAGE}" \
-            --progress plain \
-            .
+        run: docker pull "${DOCKER_IMAGE}"
 
       - name: Build PyTorch wheel
         shell: bash
@@ -151,6 +128,7 @@ jobs:
           set -eux
           export PYTORCH_FINAL_PACKAGE_DIR="${RUNNER_TEMP}/artifacts"
           mkdir -p "${PYTORCH_FINAL_PACKAGE_DIR}"
+          DOCKER_CTX="${GITHUB_WORKSPACE}/upstream-ci/.ci/docker"
 
           container_name=$(docker run \
             -e BINARY_ENV_FILE \
@@ -168,13 +146,87 @@ jobs:
             -e DOCKER_IMAGE \
             -e ALPINE_IMAGE \
             -e MAX_JOBS \
+            -e BASE_CUDA_VERSION \
             --shm-size=16g \
             --tty \
             --detach \
             -v "${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}" \
             -v "${PYTORCH_FINAL_PACKAGE_DIR}:${PYTORCH_FINAL_PACKAGE_DIR}" \
+            -v "${DOCKER_CTX}:${DOCKER_CTX}" \
             -w / \
             "${DOCKER_IMAGE}")
+
+          docker exec -t "${container_name}" bash -c '
+            set -eux
+            DEVTOOLSET_VERSION=13
+
+            # Install OS packages (mirror Dockerfile base stage)
+            yum -y install epel-release
+            yum -y update
+            yum install -y \
+              autoconf automake bison bzip2 curl diffutils file git make patch perl \
+              unzip util-linux wget which xz yasm less zstd libgomp sudo \
+              gcc-toolset-${DEVTOOLSET_VERSION}-gcc \
+              gcc-toolset-${DEVTOOLSET_VERSION}-gcc-c++ \
+              gcc-toolset-${DEVTOOLSET_VERSION}-gcc-gfortran \
+              gcc-toolset-${DEVTOOLSET_VERSION}-gdb
+
+            export PATH=/opt/rh/gcc-toolset-${DEVTOOLSET_VERSION}/root/usr/bin:$PATH
+            export LD_LIBRARY_PATH=/opt/rh/gcc-toolset-${DEVTOOLSET_VERSION}/root/usr/lib64:/opt/rh/gcc-toolset-${DEVTOOLSET_VERSION}/root/usr/lib:$LD_LIBRARY_PATH
+
+            git config --global --add safe.directory "*"
+
+            # Install Rust toolchain (needed for torch._rust extension)
+            cd "'"${DOCKER_CTX}"'"
+            bash ./common/install_rust.sh
+            export RUSTUP_HOME=/opt/rust
+            export CARGO_HOME=/opt/rust
+            export PATH=/opt/rust/bin:$PATH
+
+            # Install CUDA, cuDNN, NVSHMEM, NCCL, cuSparseLt
+            cd "'"${DOCKER_CTX}"'"
+            cp -r ci_commit_pins /ci_commit_pins
+            bash ./common/install_cuda.sh ${BASE_CUDA_VERSION}
+            rm -rf /ci_commit_pins
+
+            # Install magma
+            cd "'"${DOCKER_CTX}"'"
+            bash ./common/install_magma.sh ${BASE_CUDA_VERSION}
+
+            # Install NVPL BLAS/LAPACK
+            cd "'"${DOCKER_CTX}"'"
+            bash ./common/install_nvpl.sh
+            cp -r /opt/nvpl/lib/* /usr/local/lib/
+            cp -r /opt/nvpl/include/* /usr/local/include/
+
+            # Install Arm Compute Library
+            cd "'"${DOCKER_CTX}"'"
+            python3.9 -m pip install scons==4.7.0
+            ln -sf /opt/python/cp39-cp39/bin/scons /usr/local/bin
+            bash ./common/install_acl.sh
+
+            # Install LLVM BOLT
+            cd "'"${DOCKER_CTX}"'"
+            bash ./common/install_llvm_tools.sh
+            if [ -d /llvm/install ]; then
+              cp -r /llvm/install/* /usr/local/ || true
+            fi
+
+            # Set up CUDA environment
+            ln -sf /usr/local/cuda-${BASE_CUDA_VERSION} /usr/local/cuda
+            export PATH=/usr/local/cuda/bin:$PATH
+            export LD_LIBRARY_PATH=/acl/build/:$LD_LIBRARY_PATH
+
+            # Patch libstdc++
+            cd "'"${DOCKER_CTX}"'"
+            bash ./common/patch_libstdc.sh
+
+            # Clean up downloaded archives to free disk space
+            rm -rf /tmp/* /root/.cache /var/cache/yum 2>/dev/null || true
+            df -h /
+          '
+
+          echo "--- Container setup complete, starting PyTorch build ---"
 
           docker exec -t -w "${PYTORCH_ROOT}" "${container_name}" \
             bash -c "git config --global --add safe.directory '${PYTORCH_ROOT}' && bash .ci/pytorch/binary_populate_env.sh"
