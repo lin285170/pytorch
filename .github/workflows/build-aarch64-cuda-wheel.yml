@@ -176,38 +176,49 @@ jobs:
 
             git config --global --add safe.directory "*"
 
-            # Install Rust toolchain (needed for torch._rust extension)
-            cd "'"${DOCKER_CTX}"'"
-            cp ci_commit_pins/rust.txt ./rust.txt && bash ./common/install_rust.sh && rm -f ./rust.txt
-            export RUSTUP_HOME=/opt/rust
-            export CARGO_HOME=/opt/rust
-            export PATH=/opt/rust/bin:$PATH
+            # Flatten all install scripts + pin files into one directory,
+            # mirroring how the Dockerfile COPYs everything into a single layer.
+            # install_cuda.sh calls install_nccl.sh / install_cusparselt.sh via
+            # relative paths, and install_nccl.sh reads ci_commit_pins/*.txt.
+            SETUP_DIR=/tmp/setup
+            mkdir -p "${SETUP_DIR}/ci_commit_pins"
+            CTX='"${DOCKER_CTX}"'
+            cp "${CTX}/common/"install_cuda.sh "${SETUP_DIR}/"
+            cp "${CTX}/common/"install_nccl.sh "${SETUP_DIR}/"
+            cp "${CTX}/common/"install_cusparselt.sh "${SETUP_DIR}/"
+            cp "${CTX}/common/"install_magma.sh "${SETUP_DIR}/"
+            cp "${CTX}/common/"install_nvpl.sh "${SETUP_DIR}/"
+            cp "${CTX}/common/"install_rust.sh "${SETUP_DIR}/"
+            cp "${CTX}/common/"install_acl.sh "${SETUP_DIR}/"
+            cp "${CTX}/common/"install_llvm_tools.sh "${SETUP_DIR}/"
+            cp "${CTX}/common/"patch_libstdc.sh "${SETUP_DIR}/"
+            cp "${CTX}/ci_commit_pins/"* "${SETUP_DIR}/ci_commit_pins/"
+
+            cd "${SETUP_DIR}"
+
+            # Install Rust toolchain
+            cp ci_commit_pins/rust.txt ./rust.txt
+            bash ./install_rust.sh
+            rm -f ./rust.txt
 
             # Install CUDA, cuDNN, NVSHMEM, NCCL, cuSparseLt
-            cd "'"${DOCKER_CTX}"'"
-            # ci_commit_pins is already available at ./ci_commit_pins (relative to DOCKER_CTX)
-            bash ./common/install_cuda.sh ${BASE_CUDA_VERSION}
-            
+            bash ./install_cuda.sh ${BASE_CUDA_VERSION}
 
             # Install magma
-            cd "'"${DOCKER_CTX}"'"
-            bash ./common/install_magma.sh ${BASE_CUDA_VERSION}
+            bash ./install_magma.sh ${BASE_CUDA_VERSION}
 
             # Install NVPL BLAS/LAPACK
-            cd "'"${DOCKER_CTX}"'"
-            bash ./common/install_nvpl.sh
+            bash ./install_nvpl.sh
             cp -r /opt/nvpl/lib/* /usr/local/lib/
             cp -r /opt/nvpl/include/* /usr/local/include/
 
             # Install Arm Compute Library
-            cd "'"${DOCKER_CTX}"'"
             python3.9 -m pip install scons==4.7.0
             ln -sf /opt/python/cp39-cp39/bin/scons /usr/local/bin
-            bash ./common/install_acl.sh
+            bash ./install_acl.sh
 
             # Install LLVM BOLT
-            cd "'"${DOCKER_CTX}"'"
-            bash ./common/install_llvm_tools.sh
+            bash ./install_llvm_tools.sh
             if [ -d /llvm/install ]; then
               cp -r /llvm/install/* /usr/local/ || true
             fi
@@ -218,11 +229,10 @@ jobs:
             export LD_LIBRARY_PATH=/acl/build/:$LD_LIBRARY_PATH
 
             # Patch libstdc++
-            cd "'"${DOCKER_CTX}"'"
-            bash ./common/patch_libstdc.sh
+            bash ./patch_libstdc.sh
 
-            # Clean up downloaded archives to free disk space
-            rm -rf /tmp/* /root/.cache /var/cache/yum 2>/dev/null || true
+            # Clean up
+            rm -rf "${SETUP_DIR}" /tmp/* /root/.cache /var/cache/yum 2>/dev/null || true
             df -h /
           '
 
