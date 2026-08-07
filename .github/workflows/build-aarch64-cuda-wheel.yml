@@ -178,16 +178,16 @@ jobs:
 
             # Install Rust toolchain (needed for torch._rust extension)
             cd "'"${DOCKER_CTX}"'"
-            bash ./common/install_rust.sh
+            cp ci_commit_pins/rust.txt ./rust.txt && bash ./common/install_rust.sh && rm -f ./rust.txt
             export RUSTUP_HOME=/opt/rust
             export CARGO_HOME=/opt/rust
             export PATH=/opt/rust/bin:$PATH
 
             # Install CUDA, cuDNN, NVSHMEM, NCCL, cuSparseLt
             cd "'"${DOCKER_CTX}"'"
-            cp -r ci_commit_pins /ci_commit_pins
+            # ci_commit_pins is already available at ./ci_commit_pins (relative to DOCKER_CTX)
             bash ./common/install_cuda.sh ${BASE_CUDA_VERSION}
-            rm -rf /ci_commit_pins
+            
 
             # Install magma
             cd "'"${DOCKER_CTX}"'"
