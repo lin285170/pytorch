@@ -202,7 +202,7 @@ jobs:
             rm -f ./rust.txt
 
             # Install CUDA, cuDNN, NVSHMEM, NCCL, cuSparseLt
-            bash ./install_cuda.sh ${BASE_CUDA_VERSION}
+            MAKEFLAGS="-j2" bash ./install_cuda.sh ${BASE_CUDA_VERSION}
 
             # Install magma
             bash ./install_magma.sh ${BASE_CUDA_VERSION}
@@ -218,7 +218,7 @@ jobs:
             bash ./install_acl.sh
 
             # Install LLVM BOLT
-            bash ./install_llvm_tools.sh
+            MAKEFLAGS="-j2" bash ./install_llvm_tools.sh
             if [ -d /llvm/install ]; then
               cp -r /llvm/install/* /usr/local/ || true
             fi
@@ -232,7 +232,9 @@ jobs:
             bash ./patch_libstdc.sh
 
             # Clean up
-            rm -rf "${SETUP_DIR}" /tmp/* /root/.cache /var/cache/yum 2>/dev/null || true
+            rm -rf "" /tmp/* /root/.cache /var/cache/yum 2>/dev/null || true
+            echo '--- disk after setup ---'
+            df -h /
             df -h /
           '
 
