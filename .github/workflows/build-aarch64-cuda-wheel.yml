@@ -178,8 +178,6 @@ jobs:
 
             # Flatten all install scripts + pin files into one directory,
             # mirroring how the Dockerfile COPYs everything into a single layer.
-            # install_cuda.sh calls install_nccl.sh / install_cusparselt.sh via
-            # relative paths, and install_nccl.sh reads ci_commit_pins/*.txt.
             SETUP_DIR=/tmp/setup
             mkdir -p "${SETUP_DIR}/ci_commit_pins"
             CTX='"${DOCKER_CTX}"'
@@ -194,6 +192,9 @@ jobs:
             cp "${CTX}/common/"patch_libstdc.sh "${SETUP_DIR}/"
             cp "${CTX}/ci_commit_pins/"* "${SETUP_DIR}/ci_commit_pins/"
 
+            # Patch NCCL to build serially (-j1) to avoid OOM on 16GB runner
+            sed -i "s/make -j src.build/make -j1 src.build/" "${SETUP_DIR}/install_nccl.sh"
+
             cd "${SETUP_DIR}"
 
             # Install Rust toolchain
@@ -202,7 +203,7 @@ jobs:
             rm -f ./rust.txt
 
             # Install CUDA, cuDNN, NVSHMEM, NCCL, cuSparseLt
-            MAKEFLAGS="-j2" bash ./install_cuda.sh ${BASE_CUDA_VERSION}
+            bash ./install_cuda.sh ${BASE_CUDA_VERSION}
 
             # Install magma
             bash ./install_magma.sh ${BASE_CUDA_VERSION}
@@ -217,7 +218,7 @@ jobs:
             ln -sf /opt/python/cp39-cp39/bin/scons /usr/local/bin
             bash ./install_acl.sh
 
-            # Install LLVM BOLT
+            # Install LLVM BOLT (limit parallelism to avoid OOM)
             MAKEFLAGS="-j2" bash ./install_llvm_tools.sh
             if [ -d /llvm/install ]; then
               cp -r /llvm/install/* /usr/local/ || true
@@ -232,9 +233,8 @@ jobs:
             bash ./patch_libstdc.sh
 
             # Clean up
-            rm -rf "" /tmp/* /root/.cache /var/cache/yum 2>/dev/null || true
-            echo '--- disk after setup ---'
-            df -h /
+            rm -rf "${SETUP_DIR}" /tmp/* /root/.cache /var/cache/yum 2>/dev/null || true
+            echo "--- disk after setup ---"
             df -h /
           '
 
