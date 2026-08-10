@@ -194,6 +194,7 @@ jobs:
 
             # Patch NCCL to build serially (-j1) to avoid OOM on 16GB runner
             sed -i "s/make -j src.build/make -j1 src.build/" "${SETUP_DIR}/install_nccl.sh"
+            sed -i "s/scons -j8/scons -j2/" "${SETUP_DIR}/install_acl.sh"
 
             cd "${SETUP_DIR}"
 
@@ -255,3 +256,4 @@ jobs:
           name: aarch64-cuda-${{ inputs.desired_cuda }}-py${{ inputs.desired_python }}
           if-no-files-found: warn
           path: ${{ runner.temp }}/artifacts/*
+
