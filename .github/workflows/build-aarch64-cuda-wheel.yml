@@ -214,21 +214,14 @@ jobs:
             cp -r /opt/nvpl/lib/* /usr/local/lib/
             cp -r /opt/nvpl/include/* /usr/local/include/
 
-            # Install Arm Compute Library
-            python3.9 -m pip install scons==4.7.0
-            ln -sf /opt/python/cp39-cp39/bin/scons /usr/local/bin
-            bash ./install_acl.sh
+            # Skip Arm Compute Library (optional ARM CPU optimization, causes OOM; CUDA build uses NVPL/OpenBLAS)
 
-            # Install LLVM BOLT (limit parallelism to avoid OOM)
-            MAKEFLAGS="-j2" bash ./install_llvm_tools.sh
-            if [ -d /llvm/install ]; then
-              cp -r /llvm/install/* /usr/local/ || true
-            fi
+            # Skip LLVM BOLT (optional post-link optimization, not required for functional wheel)
 
             # Set up CUDA environment
             ln -sf /usr/local/cuda-${BASE_CUDA_VERSION} /usr/local/cuda
             export PATH=/usr/local/cuda/bin:$PATH
-            export LD_LIBRARY_PATH=/acl/build/:$LD_LIBRARY_PATH
+            export LD_LIBRARY_PATH=$LD_LIBRARY_PATH
 
             # Patch libstdc++
             bash ./patch_libstdc.sh
@@ -256,4 +249,6 @@ jobs:
           name: aarch64-cuda-${{ inputs.desired_cuda }}-py${{ inputs.desired_python }}
           if-no-files-found: warn
           path: ${{ runner.temp }}/artifacts/*
+
+
 
