@@ -1,4 +1,4 @@
-﻿# Build aarch64 (Linux ARM64) PyTorch wheel with CUDA support.
+# Build aarch64 (Linux ARM64) PyTorch wheel with CUDA support.
 #
 # Reuses the official PyTorch aarch64 manywheel build pipeline
 # (.ci/pytorch/binary_populate_env.sh + .ci/manywheel/build.sh) inside the
@@ -73,7 +73,7 @@ jobs:
   build:
     needs: resolve-config
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 360
+    timeout-minutes: 480
     env:
       PYTORCH_ROOT: ${{ github.workspace }}
       PACKAGE_TYPE: manywheel
