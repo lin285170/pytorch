@@ -142,6 +142,7 @@ jobs:
             -e DOCKER_IMAGE \
             -e ALPINE_IMAGE \
             -e MAX_JOBS \
+            -e BUILD_TEST=0 \
             --shm-size=16g \
             --tty \
             --detach \
