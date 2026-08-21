@@ -11,7 +11,7 @@
 # runner otherwise OOM-kills (exit 137) during torch_cuda compilation.
 #
 # Authored with AI assistance.
-name: build-aarch64-cuda-wheel
+name: Build Pytorch aarch64 wheels
 
 on:
   workflow_dispatch:
