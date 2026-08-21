@@ -154,10 +154,22 @@ jobs:
           docker exec -t -w "${PYTORCH_ROOT}" "${container_name}" \
             bash -c "git config --global --add safe.directory '${PYTORCH_ROOT}' && bash .ci/pytorch/binary_populate_env.sh"
 
+          # Override version to plain 2.15.0 (no dev date, no +cu126 suffix)
+          docker exec -t -w "${PYTORCH_ROOT}" "${container_name}" \
+            bash -c "sed -i 's/export PYTORCH_BUILD_VERSION=.*/export PYTORCH_BUILD_VERSION=2.15.0/' '${BINARY_ENV_FILE}' && sed -i 's/export OVERRIDE_PACKAGE_VERSION=.*/export OVERRIDE_PACKAGE_VERSION=2.15.0/' '${BINARY_ENV_FILE}'"
+
           docker exec -t -w "${PYTORCH_ROOT}" "${container_name}" \
             bash -c "source '${BINARY_ENV_FILE}' && bash .ci/manywheel/build.sh"
 
           docker stop "${container_name}" >/dev/null || true
+
+      - name: Rename wheel
+        shell: bash
+        run: |
+          cd "${RUNNER_TEMP}/artifacts"
+          ls -la *.whl
+          mv *.whl torch-2.15.0-cp312-cp312-linux_aarch64.whl
+          ls -la
 
       - name: Upload wheel
         if: always()
